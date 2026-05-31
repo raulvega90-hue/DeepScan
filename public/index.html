@@ -277,8 +277,15 @@ function confluence(c){
   // 5. Participación: volumen por encima de su media
   if(rvol && rvol>=1.2){ score++; reasons.push(`RVOL ${fmt(rvol,1)}x`); }
 
+  // Bias con fallback: si falta historial para MA200, usa MA50; si falta, MA20.
   let bias='neutral';
-  if(ma50 && ma200){ bias = (price>ma50 && ma50>ma200) ? 'long' : (price<ma50 && ma50<ma200) ? 'short' : 'neutral'; }
+  if(ma50 && ma200){
+    bias = (price>ma50 && ma50>ma200) ? 'long' : (price<ma50 && ma50<ma200) ? 'short' : 'neutral';
+  } else if(ma50){
+    bias = price>ma50 ? 'long' : 'short';
+  } else if(ma20){
+    bias = price>ma20 ? 'long' : 'short';
+  }
 
   const atrPct = a && price ? (a/price*100) : null;
   return {score, reasons, bias, ma20,ma50,ma200, rsi:r, atr:a, atrPct, rvol};
