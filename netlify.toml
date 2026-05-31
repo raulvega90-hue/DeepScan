@@ -1,0 +1,19 @@
+# ============================================================
+#  netlify.toml — configuración del sitio
+# ============================================================
+
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+
+# /api/quote, /api/candles, /api/market-status  ->  función scan
+[[redirects]]
+  from = "/api/*"
+  to   = "/.netlify/functions/scan/:splat"
+  status = 200
+
+# /login  ->  función login
+[[redirects]]
+  from = "/login"
+  to   = "/.netlify/functions/login"
+  status = 200
