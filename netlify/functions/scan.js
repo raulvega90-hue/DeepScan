@@ -62,7 +62,7 @@ async function tdCandles(symbol) {
   if (c) return c;
 
   const qs = new URLSearchParams({
-    symbol, interval: '1day', outputsize: '120', apikey: process.env.TWELVEDATA_KEY
+    symbol, interval: '1day', outputsize: '250', apikey: process.env.TWELVEDATA_KEY
   });
   const r = await fetch(`${TD}/time_series?${qs}`);
   if (!r.ok) throw { code: 502, msg: 'Twelve Data respondió ' + r.status };
