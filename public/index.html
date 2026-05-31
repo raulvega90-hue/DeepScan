@@ -343,7 +343,8 @@ function biasTag(b){
 function priceCell(sym,q){
   const dp=q&&q.dp!=null?q.dp:null, cls=dp>=0?'positive':'negative';
   const sign=dp>=0?'+':'';
-  return `<span class="price ${cls}" data-ticker="${sym}">${fmt(q?.c)} <span class="ticker-sub">(${sign}${fmt(dp)}%)</span></span>`;
+  const pc=q&&q.pc?q.pc:'';
+  return `<span class="price ${cls}" data-ticker="${sym}" data-pc="${pc}">${fmt(q?.c)} <span class="ticker-sub">(${sign}${fmt(dp)}%)</span></span>`;
 }
 
 function renderPortfolio(rows){
@@ -408,27 +409,75 @@ function renderIntraday(rows){
   document.getElementById('daytrade-table').innerHTML=h+'</tbody></table>';
 }
 
-/* ================= LIVE TICKS (refresca quotes reales) ================= */
-let tickTimer=null;
+/* ================= LIVE TICKS (WebSocket Finnhub en tiempo real) =================
+   IMPORTANTE — CLAVE DEDICADA:
+   Esta clave SOLO se usa para el WebSocket y queda visible en el navegador.
+   NO uses aquí tu clave principal (la del servidor): usa una SEGUNDA clave
+   de Finnhub creada solo para esto. Si la abusan, solo afecta el streaming.
+   Si puedes, restríngela por dominio en el panel de Finnhub.                     */
+const FINNHUB_WS_KEY = 'd8dr2v1r01qhm4agpnm0d8dr2v1r01qhm4agpnmg';
+
+let ws=null, wsReconnectTimer=null, subscribedSyms=new Set();
+
+function applyTick(sym, price){
+  document.querySelectorAll(`.price[data-ticker="${sym}"]`).forEach(el=>{
+    const old = parseFloat(el.textContent) || price;
+    const pc  = parseFloat(el.dataset.pc) || 0;
+    const dp  = pc ? ((price - pc) / pc * 100) : 0;
+    const cls = dp>=0 ? 'positive' : 'negative';
+    const sign= dp>=0 ? '+' : '';
+    el.className = `price ${cls} ${price>old?'flash-up':price<old?'flash-dn':''}`;
+    el.innerHTML = `${fmt(price)} <span class="ticker-sub">(${sign}${fmt(dp)}%)</span>`;
+    setTimeout(()=>{ el.className=`price ${cls}`; }, 400);
+  });
+}
+
+function currentSymbols(){
+  const els=[...document.querySelectorAll('.price[data-ticker]')];
+  return [...new Set(els.map(e=>e.dataset.ticker))].slice(0,50);  // WS gratis: máx 50
+}
+
 function startLiveTicks(){
-  if(tickTimer) clearInterval(tickTimer);
-  tickTimer=setInterval(async ()=>{
-    const els=[...document.querySelectorAll('.price[data-ticker]')];
-    const syms=[...new Set(els.map(e=>e.dataset.ticker))];
-    for(const s of syms){
-      try{
-        const q=await getQuote(s);
-        els.filter(e=>e.dataset.ticker===s).forEach(el=>{
-          const old=parseFloat(el.textContent)||q.c;
-          const cls=q.dp>=0?'positive':'negative', sign=q.dp>=0?'+':'';
-          el.className=`price ${cls} ${q.c>old?'flash-up':q.c<old?'flash-dn':''}`;
-          el.innerHTML=`${fmt(q.c)} <span class="ticker-sub">(${sign}${fmt(q.dp)}%)</span>`;
-          setTimeout(()=>el.className=`price ${cls}`,400);
-        });
-        await new Promise(r=>setTimeout(r,120));
-      }catch(e){ /* probablemente rate limit; el próximo ciclo reintenta */ }
+  if(FINNHUB_WS_KEY==='PON_AQUI_TU_SEGUNDA_CLAVE_FINNHUB'){
+    setStatus('⚠️ Ticks en vivo desactivados: falta la clave del WebSocket en el código.');
+    return;
+  }
+  stopLiveTicks();
+  try{
+    ws = new WebSocket(`wss://ws.finnhub.io?token=${FINNHUB_WS_KEY}`);
+  }catch(e){ return; }
+
+  ws.onopen = () => {
+    subscribedSyms = new Set(currentSymbols());
+    subscribedSyms.forEach(s => ws.send(JSON.stringify({type:'subscribe', symbol:s})));
+  };
+
+  ws.onmessage = (ev) => {
+    let msg; try{ msg=JSON.parse(ev.data); }catch{ return; }
+    if(msg.type==='trade' && Array.isArray(msg.data)){
+      // Puede llegar más de un trade por símbolo; usamos el último precio.
+      const last={};
+      msg.data.forEach(t => { last[t.s] = t.p; });
+      Object.entries(last).forEach(([sym,price]) => applyTick(sym, price));
     }
-  }, 15000);   // cada 15s: respeta el límite de 60/min con este universo
+  };
+
+  ws.onclose = () => {
+    // Reconexión automática a los 4s (salvo cierre intencional).
+    if(wsReconnectTimer) clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = setTimeout(startLiveTicks, 4000);
+  };
+
+  ws.onerror = () => { try{ ws.close(); }catch{} };
+}
+
+function stopLiveTicks(){
+  if(wsReconnectTimer){ clearTimeout(wsReconnectTimer); wsReconnectTimer=null; }
+  if(ws){
+    try{ subscribedSyms.forEach(s => ws.send(JSON.stringify({type:'unsubscribe', symbol:s}))); }catch{}
+    try{ ws.onclose=null; ws.close(); }catch{}
+    ws=null;
+  }
 }
 
 /* ================= MARKET STATUS ================= */
@@ -449,7 +498,7 @@ async function runFullScan(){
   const btn=document.getElementById('scan-btn');
   btn.disabled=true;
   document.getElementById('overlay').style.display='flex';
-  if(tickTimer) clearInterval(tickTimer);
+  stopLiveTicks();
   setStatus('Ejecutando deepscan…');
 
   try{
